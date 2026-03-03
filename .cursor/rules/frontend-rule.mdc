@@ -11,3 +11,6 @@ alwaysApply: false
 - You should use Next.js as it works best with Vercel. 
 - This frontend will ultimately be deployed on Vercel, but it should be possible to test locally. 
 - Always provide users with a way to run the created UI once you have created it.
+
+- The style should follow UI for a Christian life + faith Q&A, inspired by the “Alpha Course” style (warm, welcoming, modern).
+- Use Next.js + React with TypeScript. Use shadcn/ui components. Clean typography, generous whitespace, soft card shadows, rounded corners. No direct copying of Alpha branding/logos; use an “Alpha-inspired” neutral design.
