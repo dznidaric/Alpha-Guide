@@ -6,26 +6,53 @@ layer stays thin.
 """
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from langchain.agents import create_agent
 from langchain.tools import tool
+from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_openai import OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 from langgraph.checkpoint.memory import MemorySaver
 from tavily import AsyncTavilyClient
+from langchain_community.retrievers import BM25Retriever
+
+from helpers.hybrid_retriever import HybridRetriever
+
 
 load_dotenv()
 
 if not os.getenv("OPENAI_API_KEY"):
     raise RuntimeError("OPENAI_API_KEY is not set in the environment.")
 
+DATA_DIR = (Path(__file__).resolve().parents[1] / "docs")  # repo_root/docs
+
+# ---------------------------------------------------------------------------
+# LangSmith tracing — enabled automatically when LANGCHAIN_API_KEY is set.
+# All LLM calls, tool invocations, and agent runs will appear in the
+# LangSmith dashboard under the "alpha-guide" project.
+# ---------------------------------------------------------------------------
+# Optional: LangSmith for tracing
+env = os.getenv("ENVIRONMENT", "local")
+
+os.environ["LANGSMITH_TRACING"] = "true"
+os.environ["LANGCHAIN_PROJECT"] = f"Alpha Guide - {env}"
+os.environ["LANGCHAIN_API_KEY"] = os.environ.get("LANGCHAIN_API_KEY")
+os.environ["LANGSMITH_ENDPOINT"] = "https://eu.api.smith.langchain.com"
+
+if not os.environ["LANGCHAIN_API_KEY"]:
+    os.environ["LANGSMITH_TRACING"] = "false"
+    print("LangSmith tracing disabled")
+else:
+    print(f"LangSmith tracing enabled. Project: {os.environ['LANGCHAIN_PROJECT']}")
 checkpointer = None
 agent = None
 retriever = None
 
 # Tavily client for web search (initialised lazily if TAVILY_API_KEY is set)
 _tavily_client: AsyncTavilyClient | None = None
+
 
 def get_tavily_client() -> AsyncTavilyClient:
     """Return a singleton Tavily client, raising if the API key is missing."""
@@ -53,7 +80,7 @@ Guidelines:
 """
 
 
-def create_qdrant_retriever():
+def create_vector_store():
     url = os.getenv("QDRANT_URL")
     api_key = os.getenv("QDRANT_API_KEY")
 
@@ -62,22 +89,38 @@ def create_qdrant_retriever():
         api_key=api_key,
         port=443,
         http2=False,  # Proxies often struggle with HTTP/2; keeping it False is safer
+        timeout=30,
+        verify=False,
     )
 
     vector_store = QdrantVectorStore(
         collection_name="alpha-guide-rag",
         embedding=OpenAIEmbeddings(model="text-embedding-3-small"),
-        client=qdrant_client
+        client=qdrant_client,
     )
+    return vector_store
 
-    return vector_store.as_retriever(search_kwargs={"k": 4})
 
-retriever = create_qdrant_retriever()
+vector_store = create_vector_store()
+retriever = vector_store.as_retriever(search_kwargs={"k": 10})
+
+loader = PyPDFDirectoryLoader(str(DATA_DIR))
+raw_docs = loader.load()
+print(f"Loaded {len(raw_docs)} documents from {DATA_DIR}")
+bm25_retriever = BM25Retriever.from_documents(documents=raw_docs, k=8)
+
+hybrid_retriever = HybridRetriever(
+    dense_retriever=retriever,
+    bm25_retriever=bm25_retriever,
+    k_dense=20,
+    k_bm25=20,
+    k_final=8,
+)
 
 @tool
 async def retrieve(query: str) -> str:
     """Search the questions of life knowledge base for information about the life and faith.
-    
+
     Args:
         query: The search query to find relevant information.
     """
@@ -89,6 +132,20 @@ async def retrieve(query: str) -> str:
     formatted_results = []
     for i, doc in enumerate(results, 1):
         formatted_results.append(f"[Source {i}]:\n{doc.page_content}")
+
+    return "\n\n".join(formatted_results)
+
+
+@tool
+async def retrieve_hybrid(query: str) -> str:
+    """Search the questions of life knowledge base for information about the life and faith using a hybrid retrieval method."""
+    results = await hybrid_retriever.ainvoke(query)
+    formatted_results = []
+    for i, doc in enumerate(results, 1):
+        src = doc.metadata.get("source", "unknown")
+        page = doc.metadata.get("page")
+        page_txt = f", page {page}" if page is not None else ""
+        formatted_results.append(f"[Source {i}] ({src}{page_txt}):\n{doc.page_content}")
 
     return "\n\n".join(formatted_results)
 
@@ -120,7 +177,7 @@ async def web_search(query: str) -> str:
         return f"Web search failed: {e}"
 
 
-tools = [retrieve, web_search]
+tools = [retrieve_hybrid, web_search]
 
 
 async def get_agent():
@@ -137,11 +194,12 @@ async def get_agent():
             try:
                 # Production: persist conversation state in Redis
                 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+
                 checkpointer = AsyncRedisSaver(redis_url=redis_url)
                 await checkpointer.asetup()
             except Exception as e:
                 print(f"Error setting up Redis: {e}")
-            
+
         else:
             checkpointer = MemorySaver()
 
@@ -152,4 +210,3 @@ async def get_agent():
             checkpointer=checkpointer,
         )
     return agent
-
