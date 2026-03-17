@@ -118,8 +118,9 @@ retriever = vector_store.as_retriever(search_kwargs={"k": 10})
 child_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
 parent_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
 
-# InMemoryStore for parent documents (child chunks are in Qdrant vector store)
-PARENT_STORE_DIR = "./parent_docstore"
+# FileDocStore for parent documents (child chunks are in Qdrant vector store)
+# Use /tmp in Lambda/Vercel (only writable directory), fallback to ./parent_docstore for local dev
+PARENT_STORE_DIR = "/tmp/parent_docstore" if os.getenv("ENVIRONMENT") == "production" else "./parent_docstore"
 
 docstore = FileDocStore(PARENT_STORE_DIR)
 

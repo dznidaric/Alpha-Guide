@@ -9,7 +9,15 @@ from langchain_core.stores import BaseStore
 class FileDocStore(BaseStore[str, Document]):
     def __init__(self, path: str = "./parent_docstore"):
         self.path = path
-        os.makedirs(path, exist_ok=True)
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError as e:
+            # In read-only filesystems (like Lambda), fall back to /tmp
+            if e.errno == 30:  # Read-only file system
+                self.path = "/tmp/parent_docstore"
+                os.makedirs(self.path, exist_ok=True)
+            else:
+                raise
 
     def _get_path(self, key: str) -> str:
         safe_key = key.replace("/", "_")
