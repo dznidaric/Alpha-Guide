@@ -7,20 +7,19 @@ API layer stays thin.
 
 import logging
 import os
-from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain.agents import create_agent
 from langchain.tools import tool
-from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_openai import OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_classic.retrievers import ParentDocumentRetriever
+from langchain_classic.storage import InMemoryStore
 from qdrant_client import QdrantClient
 from langgraph.checkpoint.memory import MemorySaver
 from tavily import AsyncTavilyClient
-from langchain_community.retrievers import BM25Retriever
-
-from helpers.hybrid_retriever import HybridRetriever
+from helpers.file_doc_store import FileDocStore
 
 load_dotenv()
 
@@ -28,8 +27,6 @@ logger = logging.getLogger("alpha-guide.agent")
 
 if not os.getenv("OPENAI_API_KEY"):
     raise RuntimeError("OPENAI_API_KEY is not set in the environment.")
-
-DATA_DIR = (Path(__file__).resolve().parents[1] / "docs")  # repo_root/docs
 
 # ---------------------------------------------------------------------------
 # LangSmith tracing — enabled automatically when LANGCHAIN_API_KEY is set.
@@ -95,7 +92,7 @@ def create_vector_store():
     )
 
     vector_store = QdrantVectorStore(
-        collection_name="alpha-guide-rag",
+        collection_name="alpha_parent_child",
         embedding=OpenAIEmbeddings(model="text-embedding-3-small"),
         client=qdrant_client,
     )
@@ -105,18 +102,29 @@ def create_vector_store():
 vector_store = create_vector_store()
 retriever = vector_store.as_retriever(search_kwargs={"k": 10})
 
-loader = PyPDFDirectoryLoader(str(DATA_DIR))
-raw_docs = loader.load()
-logger.info("Loaded %d documents from %s", len(raw_docs), DATA_DIR)
-bm25_retriever = BM25Retriever.from_documents(documents=raw_docs, k=8)
+# ---------------------------------------------------------------------------
+# Parent-Child Retriever Setup
+# Uses small child chunks (400 chars) for accurate matching, but returns
+# larger parent chunks (2000 chars) for better context.
+# Documents should already be indexed in Qdrant from data_ingest.ipynb.
+# ---------------------------------------------------------------------------
+child_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50)
+parent_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
 
-hybrid_retriever = HybridRetriever(
-    dense_retriever=retriever,
-    bm25_retriever=bm25_retriever,
-    k_dense=20,
-    k_bm25=20,
-    k_final=8,
+# InMemoryStore for parent documents (child chunks are in Qdrant vector store)
+PARENT_STORE_DIR = "../docs/parent_docstore"
+
+docstore = FileDocStore(PARENT_STORE_DIR)
+
+parent_child_retriever = ParentDocumentRetriever(
+    vectorstore=vector_store,
+    docstore=docstore,
+    child_splitter=child_splitter,
+    parent_splitter=parent_splitter,
+    search_kwargs={"k": 8},
 )
+
+logger.info("Parent-child retriever initialized (no PDF loading required)")
 
 @tool
 async def retrieve(query: str) -> str:
@@ -138,9 +146,16 @@ async def retrieve(query: str) -> str:
 
 
 @tool
-async def retrieve_hybrid(query: str) -> str:
-    """Search the questions of life knowledge base for information about the life and faith using a hybrid retrieval method."""
-    results = await hybrid_retriever.ainvoke(query)
+async def parent_child_retrieve(query: str) -> str:
+    """Search the questions of life knowledge base for information about the life and faith using parent-child retrieval.
+    
+    This method uses small child chunks for accurate matching but returns larger parent chunks
+    for better context, providing more comprehensive answers.
+    """
+    results = await parent_child_retriever.ainvoke(query)
+    if not results:
+        return "No relevant information found in the knowledge base."
+    
     formatted_results = []
     for i, doc in enumerate(results, 1):
         src = doc.metadata.get("source", "unknown")
@@ -178,7 +193,7 @@ async def web_search(query: str) -> str:
         return f"Web search failed: {e}"
 
 
-tools = [retrieve_hybrid, web_search]
+tools = [parent_child_retrieve, web_search]
 
 
 async def get_agent():
