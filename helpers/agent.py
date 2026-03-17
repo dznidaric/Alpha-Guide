@@ -15,7 +15,6 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_qdrant import QdrantVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_classic.retrievers import ParentDocumentRetriever
-from langchain_classic.storage import InMemoryStore
 from qdrant_client import QdrantClient
 from langgraph.checkpoint.memory import MemorySaver
 from tavily import AsyncTavilyClient
@@ -112,7 +111,7 @@ child_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50
 parent_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
 
 # InMemoryStore for parent documents (child chunks are in Qdrant vector store)
-PARENT_STORE_DIR = "../docs/parent_docstore"
+PARENT_STORE_DIR = "./parent_docstore"
 
 docstore = FileDocStore(PARENT_STORE_DIR)
 

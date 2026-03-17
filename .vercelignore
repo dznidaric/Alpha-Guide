@@ -11,7 +11,7 @@ notebooks/
 *.docx
 *.pdf
 !README.md
-# docs/ is needed for BM25 retriever - DO NOT exclude
+docs/
 
 # Development dependencies
 .env.example

@@ -17,15 +17,15 @@ python-dotenv>=1.0.0
 langchain>=1.0.0
 langchain-core>=0.3.0
 langchain-openai>=0.3.0
-langchain-community>=0.3.0
 langchain-text-splitters>=0.3.0
 langchain-qdrant>=0.2.0
 langchain-classic>=0.1.0
+# Note: langchain-community removed (~200-300 MB) - not used in production code
 
 # LangGraph (agent orchestration)
 langgraph>=0.3.0
 langgraph-checkpoint>=2.0
-langgraph-checkpoint-redis>=0.0.1
+# langgraph-checkpoint-redis>=0.0.1  # Only needed if REDIS_URL is set - install separately if needed
 
 # Vector database
 qdrant-client>=1.13.2
@@ -33,8 +33,8 @@ qdrant-client>=1.13.2
 # Web search
 tavily>=1.1.0
 
-# Observability (optional but recommended)
-langsmith>=0.2.0
+# Observability (optional - only needed if LANGCHAIN_API_KEY is set)
+# langsmith>=0.2.0  # Commented out to reduce size - uncomment if you need LangSmith tracing
 
 # OpenAI (for embeddings and chat)
 openai

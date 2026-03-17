@@ -7,7 +7,7 @@ from langchain_core.stores import BaseStore
 
 
 class FileDocStore(BaseStore[str, Document]):
-    def __init__(self, path: str = "../docs/parent_docstore"):
+    def __init__(self, path: str = "./parent_docstore"):
         self.path = path
         os.makedirs(path, exist_ok=True)
 
