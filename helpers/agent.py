@@ -17,7 +17,13 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_classic.retrievers import ParentDocumentRetriever
 from qdrant_client import QdrantClient
 from langgraph.checkpoint.memory import MemorySaver
-from tavily import AsyncTavilyClient
+# Tavily import - optional, gracefully handles if package unavailable
+try:
+    from tavily import AsyncTavilyClient
+    TAVILY_AVAILABLE = True
+except ImportError:
+    TAVILY_AVAILABLE = False
+    AsyncTavilyClient = None  # type: ignore
 from helpers.file_doc_store import FileDocStore
 
 load_dotenv()
@@ -51,7 +57,9 @@ _tavily_client: AsyncTavilyClient | None = None
 
 
 def get_tavily_client() -> AsyncTavilyClient:
-    """Return a singleton Tavily client, raising if the API key is missing."""
+    """Return a singleton Tavily client, raising if the API key is missing or package unavailable."""
+    if not TAVILY_AVAILABLE:
+        raise RuntimeError("Tavily package is not installed — web search unavailable. Install with: pip install tavily")
     global _tavily_client
     if _tavily_client is None:
         api_key = os.getenv("TAVILY_API_KEY")

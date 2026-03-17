@@ -30,8 +30,8 @@ langgraph-checkpoint>=2.0
 # Vector database
 qdrant-client>=1.13.2
 
-# Web search
-tavily>=1.1.0
+# Web search (optional - comment out if build fails, web_search tool will gracefully degrade)
+# tavily>=1.1.0  # Note: May not have binary wheels - install separately if needed
 
 # Observability (optional - only needed if LANGCHAIN_API_KEY is set)
 # langsmith>=0.2.0  # Commented out to reduce size - uncomment if you need LangSmith tracing
