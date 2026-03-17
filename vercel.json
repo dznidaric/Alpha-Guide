@@ -1,7 +1,14 @@
 {
   "version": 2,
-  "routes": [
-    { "src": "/(.*)", "dest": "/api/index.py" }
-  ]
+  "buildCommand": "npm run build",
+  "outputDirectory": ".next",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/api/index.py"
+    }
+  ],
+  "env": {
+    "ENVIRONMENT": "production"
+  }
 }
-

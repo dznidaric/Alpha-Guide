@@ -1,12 +1,14 @@
 """
-model.py — LLM and prompt factory for the Alpha-Guide RAG pipeline.
+agent.py — LLM, tools, and LangGraph agent for the Alpha-Guide RAG pipeline.
 
-Keeps all LangChain model/prompt construction in one place so the API
-layer stays thin.
+Keeps all LangChain model/prompt/tool construction in one place so the
+API layer stays thin.
 """
 
+import logging
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 from langchain.agents import create_agent
 from langchain.tools import tool
@@ -20,8 +22,9 @@ from langchain_community.retrievers import BM25Retriever
 
 from helpers.hybrid_retriever import HybridRetriever
 
-
 load_dotenv()
+
+logger = logging.getLogger("alpha-guide.agent")
 
 if not os.getenv("OPENAI_API_KEY"):
     raise RuntimeError("OPENAI_API_KEY is not set in the environment.")
@@ -30,22 +33,19 @@ DATA_DIR = (Path(__file__).resolve().parents[1] / "docs")  # repo_root/docs
 
 # ---------------------------------------------------------------------------
 # LangSmith tracing — enabled automatically when LANGCHAIN_API_KEY is set.
-# All LLM calls, tool invocations, and agent runs will appear in the
-# LangSmith dashboard under the "alpha-guide" project.
 # ---------------------------------------------------------------------------
-# Optional: LangSmith for tracing
-env = os.getenv("ENVIRONMENT", "local")
+_env_label = os.getenv("ENVIRONMENT", "local")
+_langchain_api_key = os.getenv("LANGCHAIN_API_KEY")
 
-os.environ["LANGSMITH_TRACING"] = "true"
-os.environ["LANGCHAIN_PROJECT"] = f"Alpha Guide - {env}"
-os.environ["LANGCHAIN_API_KEY"] = os.environ.get("LANGCHAIN_API_KEY")
-os.environ["LANGSMITH_ENDPOINT"] = "https://eu.api.smith.langchain.com"
-
-if not os.environ["LANGCHAIN_API_KEY"]:
-    os.environ["LANGSMITH_TRACING"] = "false"
-    print("LangSmith tracing disabled")
+if _langchain_api_key:
+    os.environ["LANGSMITH_TRACING"] = "true"
+    os.environ["LANGCHAIN_PROJECT"] = f"Alpha Guide - {_env_label}"
+    os.environ["LANGSMITH_ENDPOINT"] = "https://eu.api.smith.langchain.com"
+    # LANGCHAIN_API_KEY is already in the environment from .env / Vercel
+    logger.info("LangSmith tracing enabled → project: Alpha Guide - %s", _env_label)
 else:
-    print(f"LangSmith tracing enabled. Project: {os.environ['LANGCHAIN_PROJECT']}")
+    os.environ["LANGSMITH_TRACING"] = "false"
+    logger.info("LangSmith tracing disabled (LANGCHAIN_API_KEY not set)")
 checkpointer = None
 agent = None
 retriever = None
@@ -90,7 +90,8 @@ def create_vector_store():
         port=443,
         http2=False,  # Proxies often struggle with HTTP/2; keeping it False is safer
         timeout=30,
-        verify=False,
+        # TLS verification is ON by default — only disable behind a corp proxy
+        verify=os.getenv("QDRANT_VERIFY_TLS", "true").lower() != "false",
     )
 
     vector_store = QdrantVectorStore(
@@ -106,7 +107,7 @@ retriever = vector_store.as_retriever(search_kwargs={"k": 10})
 
 loader = PyPDFDirectoryLoader(str(DATA_DIR))
 raw_docs = loader.load()
-print(f"Loaded {len(raw_docs)} documents from {DATA_DIR}")
+logger.info("Loaded %d documents from %s", len(raw_docs), DATA_DIR)
 bm25_retriever = BM25Retriever.from_documents(documents=raw_docs, k=8)
 
 hybrid_retriever = HybridRetriever(
@@ -198,7 +199,7 @@ async def get_agent():
                 checkpointer = AsyncRedisSaver(redis_url=redis_url)
                 await checkpointer.asetup()
             except Exception as e:
-                print(f"Error setting up Redis: {e}")
+                logger.exception("Failed to set up Redis checkpointer")
 
         else:
             checkpointer = MemorySaver()

@@ -17,7 +17,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# lib/          ← removed: Python template entry was hiding Next.js lib/ directory
 lib64/
 parts/
 sdist/
