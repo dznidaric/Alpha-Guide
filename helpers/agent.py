@@ -7,6 +7,7 @@ API layer stays thin.
 
 import logging
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain.agents import create_agent
@@ -119,8 +120,8 @@ child_splitter = RecursiveCharacterTextSplitter(chunk_size=400, chunk_overlap=50
 parent_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
 
 # FileDocStore for parent documents (child chunks are in Qdrant vector store)
-# Use /tmp in Lambda/Vercel (only writable directory), fallback to ./parent_docstore for local dev
-PARENT_STORE_DIR = "/tmp/parent_docstore" if os.getenv("ENVIRONMENT") == "production" else "./parent_docstore"
+# Always load bundled parent docs from helpers/parent_docstore.
+PARENT_STORE_DIR = str((Path(__file__).resolve().parent / "parent_docstore").resolve())
 
 docstore = FileDocStore(PARENT_STORE_DIR)
 
@@ -132,7 +133,18 @@ parent_child_retriever = ParentDocumentRetriever(
     search_kwargs={"k": 8},
 )
 
-logger.info("Parent-child retriever initialized (no PDF loading required)")
+try:
+    _docstore_has_data = any(docstore.yield_keys())
+except Exception:
+    _docstore_has_data = False
+
+if _docstore_has_data:
+    logger.info("Parent-child retriever initialized (parent docstore detected)")
+else:
+    raise RuntimeError(
+        "Parent docstore is empty or missing at "
+        f"{PARENT_STORE_DIR}. Populate helpers/parent_docstore before starting the app."
+    )
 
 @tool
 async def retrieve(query: str) -> str:
@@ -201,7 +213,7 @@ async def web_search(query: str) -> str:
         return f"Web search failed: {e}"
 
 
-tools = [parent_child_retrieve, web_search]
+tools = [retrieve, parent_child_retrieve, web_search]
 
 
 async def get_agent():
@@ -214,20 +226,23 @@ async def get_agent():
     global agent, checkpointer
     if agent is None or checkpointer is None:
         redis_url = os.getenv("REDIS_URL")
-        try:
-            # Production: persist conversation state in Redis
-            from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+        if redis_url:
+            try:
+                # Production: persist conversation state in Redis
+                from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 
-            checkpointer = AsyncRedisSaver(redis_url=redis_url)
-            await checkpointer.asetup()
-            logger.info("Redis checkpointer initialized successfully")
-        except Exception as e:
-            logger.warning(
-                "Failed to set up Redis checkpointer (%s), falling back to in-memory storage. "
-                "Conversation history will not persist across deployments.",
-                str(e)
-            )
-            # Fall back to in-memory checkpointer if Redis fails
+                checkpointer = AsyncRedisSaver(redis_url=redis_url)
+                await checkpointer.asetup()
+                logger.info("Redis checkpointer initialized successfully")
+            except Exception as e:
+                logger.warning(
+                    "Failed to set up Redis checkpointer (%s), falling back to in-memory storage. "
+                    "Conversation history will not persist across deployments.",
+                    str(e),
+                )
+                # Fall back to in-memory checkpointer if Redis fails
+                checkpointer = MemorySaver()
+        else:
             checkpointer = MemorySaver()
 
         agent = create_agent(
