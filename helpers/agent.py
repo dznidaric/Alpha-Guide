@@ -214,17 +214,20 @@ async def get_agent():
     global agent, checkpointer
     if agent is None or checkpointer is None:
         redis_url = os.getenv("REDIS_URL")
-        if redis_url:
-            try:
-                # Production: persist conversation state in Redis
-                from langgraph.checkpoint.redis.aio import AsyncRedisSaver
+        try:
+            # Production: persist conversation state in Redis
+            from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 
-                checkpointer = AsyncRedisSaver(redis_url=redis_url)
-                await checkpointer.asetup()
-            except Exception as e:
-                logger.exception("Failed to set up Redis checkpointer")
-
-        else:
+            checkpointer = AsyncRedisSaver(redis_url=redis_url)
+            await checkpointer.asetup()
+            logger.info("Redis checkpointer initialized successfully")
+        except Exception as e:
+            logger.warning(
+                "Failed to set up Redis checkpointer (%s), falling back to in-memory storage. "
+                "Conversation history will not persist across deployments.",
+                str(e)
+            )
+            # Fall back to in-memory checkpointer if Redis fails
             checkpointer = MemorySaver()
 
         agent = create_agent(
